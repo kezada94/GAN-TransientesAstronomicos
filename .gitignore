@@ -1,2 +1,4 @@
 .*
 data/*.gz
+HiTS_500k/*
+*.csv

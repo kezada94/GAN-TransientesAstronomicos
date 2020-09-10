@@ -1,5 +1,14 @@
 import numpy as np
 import matplotlib.pylab as plt
+import torch
+import torch.nn as nn
+import torch.nn.parallel
+import torch.backends.cudnn as cudnn
+import torch.optim as optim
+import torch.utils.data
+import torchvision.datasets as dset
+import torchvision.transforms as transforms
+import torchvision.utils as vutils
 
 def create_noisy_xor(N_per_cluster=500, stddev_noise=0.4):
     data = stddev_noise*np.random.randn(4*N_per_cluster, 2)
@@ -65,3 +74,107 @@ class live_metric_plotter:
             ax.set_xlim([0, epoch])
             ax.set_ylim([np.amin(metrics[:epoch+1, :, i]), np.amax(metrics[:epoch+1, :, i])])
         self.fig.canvas.draw();
+# Generator Code
+
+class Generator(nn.Module):
+    def __init__(self, ngpu, nz, ngf, nc):
+        super(Generator, self).__init__()
+        self.ngpu = ngpu
+        
+        # z = 100 x 1 x 1
+        self.conv1_1 = nn.ConvTranspose2d( nz, ngf * 2, 5, 1, 0, bias=False)
+        self.bn1_1 = nn.BatchNorm2d(ngf * 2)
+        
+        self.conv1_2 = nn.ConvTranspose2d( 2, ngf * 2, 5, 1, 0, bias=False)
+        self.bn1_2 = nn.BatchNorm2d(ngf * 2)
+        
+        # state size. 336 x 5 x 5
+
+        self.conv2 = nn.ConvTranspose2d(ngf * 4, ngf * 2, 5, 2, 1, bias=False)
+        self.bn2 = nn.BatchNorm2d(ngf * 2)
+        # state size. 168 x 11 x 11
+
+        self.conv3 = nn.ConvTranspose2d( ngf * 2, ngf, 5, 2, 2, bias=False)
+        self.bn3 = nn.BatchNorm2d(ngf)
+
+        # state size. (ngf*2) x 21 x 21
+
+        self.conv4 = nn.ConvTranspose2d( ngf, nc, 6, 2, 2, bias=False)
+
+        # state size. (ngf) x 42 x 42
+
+        self.fin = nn.Tanh()
+        self.act = nn.ReLU(True)
+        
+        # state size. (3) x 42 x 42
+        
+
+    def forward(self, input, label):
+        
+        x = self.act(self.bn1_1(self.conv1_1(input)))
+        y = self.act(self.bn1_2(self.conv1_2(label)))
+        #print(x.shape)
+        #print(y.shape)
+        
+        x = torch.cat([x, y], 1)
+        #print(x.shape)
+
+        x = self.act(self.bn2(self.conv2(x)))
+        #print(x.shape)
+
+        x = self.act(self.bn3(self.conv3(x)))
+        #print(x.shape)
+
+        x = self.fin(self.conv4(x))
+        #print(x.shape)
+        return x
+    
+class Discriminator(nn.Module):
+    def __init__(self, ngpu, nc, ndf):
+        super(Discriminator, self).__init__()       
+        
+            # input is (nc) x 42 x 42
+        self.conv1_1 = nn.Conv2d(nc, ndf//2, 4, 2, 1, bias=False)
+        self.conv1_2 = nn.Conv2d(2, ndf//2, 4, 2, 1, bias=False)
+            # state size. (ndf) x 21 x 21
+        
+        self.conv2 = nn.Conv2d(ndf, ndf * 2, 4, 2, 1, bias=False)
+        self.bn1 = nn.BatchNorm2d(ndf * 2)
+            # state size. (ndf*2) x 10 x 10
+            
+        
+        self.conv3 = nn.Conv2d(ndf * 2, ndf * 4, 4, 2, 1, bias=False)
+        self.bn2 = nn.BatchNorm2d(ndf * 4)
+            # state size. (ndf*4) x 5 x 5
+            
+            
+        self.conv4 = nn.Conv2d(ndf * 4, 1, 6, 2, 1, bias=False)
+        # state size. (ndf*8) x 2 x 2
+            
+        #self.conv5 = nn.Conv2d(ndf * 8, 1, 2, 2, 0, bias=False)
+        self.capa5 = nn.Linear(ndf*8*2*2, 1)
+        self.fin = nn.Sigmoid()
+        self.act = nn.LeakyReLU(0.2, inplace=True)
+
+    def forward(self, x, label):
+        #print(x.shape)
+        x = self.act(self.conv1_1(x))
+        y = self.act(self.conv1_2(label))
+        
+        x = torch.cat([x, y], 1)
+        #print(x.shape)
+        
+        x = self.act(self.bn1(self.conv2(x)))
+        #print(x.shape)
+        
+        x = self.act(self.bn2(self.conv3(x)))
+        #print(x.shape)
+        
+        #x = self.act(self.bn3(self.conv4(x)))
+        x = self.fin(self.conv4(x))
+        #x = x.view(x.shape[0], -1)
+        #print(x.shape)
+        
+        #x = self.fin(self.capa5(x))
+        
+        return x
